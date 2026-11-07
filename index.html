@@ -1,0 +1,730 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Voice-Synced Teleprompter</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Font Inter -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    },
+                    colors: {
+                        brand: {
+                            50: '#eef2ff',
+                            100: '#e0e7ff',
+                            500: '#6366f1',
+                            600: '#4f46e5',
+                            700: '#4338ca',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: rgba(0,0,0,0.1);
+        }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(255,255,255,0.2);
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(255,255,255,0.4);
+        }
+
+        /* Teleprompter Mirror Modes */
+        .mirror-horizontal {
+            transform: scaleX(-1);
+        }
+        .mirror-vertical {
+            transform: scaleY(-1);
+        }
+        .mirror-both {
+            transform: scale(-1, -1);
+        }
+
+        /* Word highlighting styles */
+        .word-token {
+            transition: all 0.15s ease;
+            display: inline-block;
+            padding: 0 2px;
+            border-radius: 4px;
+        }
+        .word-token.spoken {
+            color: #9ca3af; /* muted past words */
+            opacity: 0.5;
+        }
+        .word-token.active {
+            color: #38bdf8; /* bright cyan active word */
+            background-color: rgba(56, 189, 248, 0.15);
+            font-weight: 700;
+            transform: scale(1.08);
+            box-shadow: 0 0 12px rgba(56, 189, 248, 0.3);
+        }
+        .word-token.upcoming {
+            color: #f3f4f6; /* crisp white upcoming */
+        }
+
+        /* High contrast mode theme overrides */
+        body.theme-high-contrast .word-token.spoken {
+            color: #6b7280;
+            opacity: 0.4;
+        }
+        body.theme-high-contrast .word-token.active {
+            color: #facc15; /* Vivid Yellow */
+            background-color: rgba(250, 204, 21, 0.2);
+            transform: scale(1.1);
+        }
+        body.theme-high-contrast .word-token.upcoming {
+            color: #ffffff;
+        }
+
+        /* Smooth scroll container */
+        #prompter-scroll-box {
+            scroll-behavior: smooth;
+        }
+    </style>
+</head>
+<body class="bg-slate-950 text-slate-100 font-sans antialiased min-h-screen flex flex-col overflow-hidden selection:bg-indigo-500 selection:text-white">
+
+    <!-- TOP NAV / HEADER -->
+    <header class="h-16 border-b border-slate-800 bg-slate-900/80 backdrop-blur-md px-6 flex items-center justify-between z-30 shrink-0">
+        <div class="flex items-center gap-3">
+            <div class="p-2 bg-indigo-600 rounded-xl shadow-lg shadow-indigo-600/30 text-white">
+                <i data-lucide="sparkles" class="w-5 h-5"></i>
+            </div>
+            <div>
+                <h1 class="font-bold text-lg leading-none text-white tracking-wide">Smart Prompter</h1>
+                <p class="text-xs text-slate-400 mt-0.5">Voice Sync & Auto-Scroll</p>
+            </div>
+        </div>
+
+        <!-- Mode Toggle Switch (Edit vs Prompter) -->
+        <div class="flex items-center bg-slate-800/80 p-1 rounded-xl border border-slate-700/60">
+            <button id="btn-mode-edit" onclick="setMode('edit')" class="px-4 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-2 transition-all bg-indigo-600 text-white shadow-md">
+                <i data-lucide="edit-3" class="w-3.5 h-3.5"></i> Editor
+            </button>
+            <button id="btn-mode-prompt" onclick="setMode('prompt')" class="px-4 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-2 transition-all text-slate-400 hover:text-white">
+                <i data-lucide="tv" class="w-3.5 h-3.5"></i> Prompter Mode
+            </button>
+        </div>
+
+        <!-- Status Pill -->
+        <div class="flex items-center gap-4">
+            <div id="speech-status-pill" class="flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium bg-slate-800 border border-slate-700 text-slate-300">
+                <span id="mic-dot" class="w-2 h-2 rounded-full bg-slate-500"></span>
+                <span id="mic-status-text">Mic Ready</span>
+            </div>
+        </div>
+    </header>
+
+    <!-- MAIN CONTENT AREA -->
+    <main class="flex-1 relative overflow-hidden flex">
+
+        <!-- EDITOR VIEW -->
+        <div id="view-editor" class="w-full h-full flex flex-col p-6 max-w-5xl mx-auto z-10 transition-all duration-300">
+            <div class="flex items-center justify-between mb-4">
+                <div>
+                    <h2 class="text-xl font-bold text-slate-100">Naskah Script</h2>
+                    <p class="text-sm text-slate-400">Ketik atau tempel naskah pidato/presentasi Anda di bawah ini.</p>
+                </div>
+                <div class="flex items-center gap-2">
+                    <button onclick="loadSampleScript('id')" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-xs font-medium text-slate-300 flex items-center gap-1.5 transition">
+                        <i data-lucide="file-text" class="w-3.5 h-3.5 text-indigo-400"></i> Contoh ID
+                    </button>
+                    <button onclick="loadSampleScript('en')" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-xs font-medium text-slate-300 flex items-center gap-1.5 transition">
+                        <i data-lucide="globe" class="w-3.5 h-3.5 text-indigo-400"></i> Sample EN
+                    </button>
+                    <button onclick="clearScript()" class="px-3 py-1.5 bg-slate-800 hover:bg-red-950/40 border border-slate-700 hover:border-red-800/60 rounded-lg text-xs font-medium text-red-400 flex items-center gap-1.5 transition">
+                        <i data-lucide="trash-2" class="w-3.5 h-3.5"></i> Hapus
+                    </button>
+                </div>
+            </div>
+
+            <textarea id="script-input" class="flex-1 w-full bg-slate-900 border border-slate-800 rounded-2xl p-6 text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent font-sans text-base leading-relaxed resize-none shadow-inner" placeholder="Tulis atau paste teks naskah Anda di sini..."></textarea>
+
+            <div class="mt-4 flex items-center justify-between text-xs text-slate-400">
+                <div class="flex items-center gap-4">
+                    <span>Jumlah Kata: <strong id="word-count" class="text-slate-200">0</strong></span>
+                    <span>Estimasi Durasi: <strong id="est-time" class="text-slate-200">0 menit</strong></span>
+                </div>
+                <button onclick="setMode('prompt')" class="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold rounded-xl shadow-lg shadow-indigo-600/25 flex items-center gap-2 text-sm transition transform active:scale-95">
+                    Mulai Teleprompter <i data-lucide="arrow-right" class="w-4 h-4"></i>
+                </button>
+            </div>
+        </div>
+
+        <!-- PROMPTER VIEW (FULLSCREEN CANVAS) -->
+        <div id="view-prompter" class="hidden absolute inset-0 bg-black flex flex-col z-20">
+            
+            <!-- Target Reading Indicator Guide Line -->
+            <div class="absolute top-1/2 left-0 right-0 h-24 -translate-y-1/2 border-y border-indigo-500/20 bg-indigo-500/5 pointer-events-none z-10 flex items-center justify-between px-4">
+                <div class="flex items-center gap-1 opacity-40">
+                    <i data-lucide="chevron-right" class="w-5 h-5 text-indigo-400"></i>
+                    <span class="text-[10px] tracking-widest uppercase font-semibold text-indigo-300">Reading Focus Zone</span>
+                </div>
+                <div class="flex items-center gap-1 opacity-40">
+                    <span class="text-[10px] tracking-widest uppercase font-semibold text-indigo-300">Focus Zone</span>
+                    <i data-lucide="chevron-left" class="w-5 h-5 text-indigo-400"></i>
+                </div>
+            </div>
+
+            <!-- Scrollable Text Display Container -->
+            <div id="prompter-scroll-box" class="flex-1 overflow-y-auto px-12 md:px-32 lg:px-64 py-[45vh] transition-transform duration-150">
+                <div id="prompter-content-wrapper" class="origin-center transition-all duration-300">
+                    <div id="prompter-text" class="leading-relaxed font-semibold tracking-wide text-center selection:bg-indigo-600 selection:text-white">
+                        <!-- Tokenized interactive script text will be injected here -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- FLOATING OVERLAY CONTROLS BAR -->
+            <div id="controls-panel" class="absolute bottom-6 left-1/2 -translate-x-1/2 bg-slate-900/90 border border-slate-800 backdrop-blur-xl px-6 py-3.5 rounded-2xl shadow-2xl flex items-center gap-6 z-30 transition-all hover:bg-slate-900">
+                
+                <!-- Voice Sync Toggle -->
+                <div class="flex items-center gap-2 border-r border-slate-800 pr-4">
+                    <button id="btn-toggle-mic" onclick="toggleVoiceSync()" class="p-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition flex items-center justify-center relative group" title="Toggle Voice Synchronization">
+                        <i id="icon-mic" data-lucide="mic" class="w-5 h-5 text-indigo-400"></i>
+                        <span id="badge-mic-live" class="hidden absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full animate-ping"></span>
+                    </button>
+                    <div class="hidden sm:block">
+                        <div class="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Modus</div>
+                        <div id="sync-mode-label" class="text-xs font-semibold text-indigo-400">Voice Sync</div>
+                    </div>
+                </div>
+
+                <!-- Play / Pause Manual Auto-Scroll Backup -->
+                <button id="btn-play-pause" onclick="togglePlayPause()" class="p-3.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-600/30 transition flex items-center justify-center transform active:scale-95" title="Play/Pause Manual Scroll">
+                    <i id="icon-play-pause" data-lucide="play" class="w-5 h-5 fill-current"></i>
+                </button>
+
+                <!-- Reset Button -->
+                <button onclick="resetPrompterPosition()" class="p-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition" title="Reset ke Awal">
+                    <i data-lucide="rotate-ccw" class="w-5 h-5"></i>
+                </button>
+
+                <!-- Speed Slider (Manual Scroll Backup) -->
+                <div class="flex flex-col gap-1 w-28 sm:w-32">
+                    <div class="flex justify-between text-[10px] font-semibold text-slate-400">
+                        <span>Speed</span>
+                        <span id="speed-val" class="text-indigo-400">3x</span>
+                    </div>
+                    <input type="range" id="slider-speed" min="1" max="10" value="3" oninput="updateSpeed(this.value)" class="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-indigo-500">
+                </div>
+
+                <!-- Font Size Adjustment -->
+                <div class="flex flex-col gap-1 w-28 sm:w-32">
+                    <div class="flex justify-between text-[10px] font-semibold text-slate-400">
+                        <span>Ukuran Teks</span>
+                        <span id="fontsize-val" class="text-indigo-400">42px</span>
+                    </div>
+                    <input type="range" id="slider-fontsize" min="24" max="72" value="42" oninput="updateFontSize(this.value)" class="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-indigo-500">
+                </div>
+
+                <!-- Mirror / Flip Mode Selector -->
+                <div class="flex items-center gap-1 border-l border-slate-800 pl-4">
+                    <button onclick="cycleMirrorMode()" id="btn-mirror" class="p-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition flex items-center gap-1.5" title="Mirror/Flip Mode (Teleprompter Rig)">
+                        <i data-lucide="flip-horizontal" class="w-5 h-5 text-slate-400"></i>
+                        <span id="mirror-label" class="text-[10px] font-bold text-slate-400 uppercase hidden md:inline">Normal</span>
+                    </button>
+
+                    <!-- Language Selector -->
+                    <select id="lang-select" onchange="changeLanguage(this.value)" class="bg-slate-800 border border-slate-700 text-slate-200 text-xs font-semibold rounded-xl px-2.5 py-3 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer">
+                        <option value="id-ID" selected>🇮🇩 ID</option>
+                        <option value="en-US">🇺🇸 EN</option>
+                        <option value="es-ES">🇪🇸 ES</option>
+                        <option value="ja-JP">🇯🇵 JP</option>
+                    </select>
+
+                    <!-- High Contrast Theme Toggle -->
+                    <button onclick="toggleTheme()" class="p-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition ml-1" title="Toggle Contrast Theme">
+                        <i data-lucide="sun" class="w-5 h-5 text-amber-400"></i>
+                    </button>
+                </div>
+            </div>
+
+        </div>
+
+    </main>
+
+    <!-- Notification Toast -->
+    <div id="toast-container" class="fixed top-20 right-6 z-50 flex flex-col gap-2 pointer-events-none"></div>
+
+    <!-- MAIN APP SCRIPT -->
+    <script>
+        // --- STATE MANAGEMENT ---
+        let currentMode = 'edit'; // 'edit' | 'prompt'
+        let scriptText = '';
+        let tokenizedWords = []; // Array of word objects { id, text, cleanText, element }
+        let currentWordIndex = 0;
+
+        // Voice Sync State
+        let recognition = null;
+        let isVoiceSyncActive = false;
+        let selectedLang = 'id-ID';
+
+        // Manual Auto Scroll Backup State
+        let isManualPlaying = false;
+        let manualScrollSpeed = 3;
+        let manualScrollInterval = null;
+
+        // Display Settings
+        let fontSize = 42;
+        let mirrorState = 0; // 0: Normal, 1: Horizontal, 2: Vertical, 3: Both
+        const mirrorClasses = ['', 'mirror-horizontal', 'mirror-vertical', 'mirror-both'];
+        const mirrorLabels = ['Normal', 'Flip H', 'Flip V', 'Flip HV'];
+        let isHighContrast = false;
+
+        // Sample Scripts
+        const SAMPLE_SCRIPTS = {
+            id: `Halo semuanya, selamat datang dalam presentasi hari ini. 
+Hari ini saya akan membahas bagaimana teknologi kecerdasan buatan dapat mengubah cara kita bekerja dan berinovasi secara efisien.
+
+Pertama-tama, pemrosesan bahasa alami atau Natural Language Processing memungkinkan komputer untuk memahami percakapan manusia secara langsung. 
+Dengan teleprompter pintar ini, teks akan otomatis berjalan mengikuti kecepatan suara Anda saat membaca naskah.
+
+Anda tidak perlu khawatir membaca terlalu cepat atau terlalu lambat. Sistem ini akan selalu menyesuaikan posisi baris kalimat tepat di tengah layar Anda.
+
+Terima kasih atas perhatian Anda, dan mari kita mulai demonstrasi fitur utama dari aplikasi ini.`,
+            en: `Hello everyone, welcome to today's presentation. 
+Today I will discuss how artificial intelligence technology can transform the way we work and innovate efficiently.
+
+First of all, Natural Language Processing allows computers to understand human speech seamlessly. 
+With this smart teleprompter, the text automatically scrolls matching your exact reading pace.
+
+You never have to worry about reading too fast or too slow. The system keeps the current active sentence perfectly centered on your screen.
+
+Thank you for your attention, and let's jump straight into the live demonstration.`
+        };
+
+        // --- DOM ELEMENTS ---
+        const viewEditor = document.getElementById('view-editor');
+        const viewPrompter = document.getElementById('view-prompter');
+        const scriptInput = document.getElementById('script-input');
+        const prompterText = document.getElementById('prompter-text');
+        const prompterScrollBox = document.getElementById('prompter-scroll-box');
+        const prompterWrapper = document.getElementById('prompter-content-wrapper');
+        const btnModeEdit = document.getElementById('btn-mode-edit');
+        const btnModePrompt = document.getElementById('btn-mode-prompt');
+
+        // Status elements
+        const micDot = document.getElementById('mic-dot');
+        const micStatusText = document.getElementById('mic-status-text');
+        const syncModeLabel = document.getElementById('sync-mode-label');
+        const btnToggleMic = document.getElementById('btn-toggle-mic');
+        const iconMic = document.getElementById('icon-mic');
+        const badgeMicLive = document.getElementById('badge-mic-live');
+
+        // Play/Pause elements
+        const btnPlayPause = document.getElementById('btn-play-pause');
+        const iconPlayPause = document.getElementById('icon-play-pause');
+
+        // --- INITIALIZATION ---
+        window.addEventListener('DOMContentLoaded', () => {
+            lucide.createIcons();
+            initSpeechRecognition();
+            
+            // Set default script
+            scriptInput.value = SAMPLE_SCRIPTS.id;
+            updateScriptStats();
+
+            scriptInput.addEventListener('input', updateScriptStats);
+        });
+
+        // --- SCRIPT STATS & UTILS ---
+        function updateScriptStats() {
+            const text = scriptInput.value.trim();
+            const words = text ? text.split(/\s+/).length : 0;
+            document.getElementById('word-count').innerText = words;
+            // Avg reading speed ~130 words per minute
+            const minutes = Math.ceil(words / 130);
+            document.getElementById('est-time').innerText = `~${minutes} min`;
+        }
+
+        function loadSampleScript(lang) {
+            scriptInput.value = SAMPLE_SCRIPTS[lang] || '';
+            updateScriptStats();
+            showToast(`Loaded sample script (${lang.toUpperCase()})`);
+        }
+
+        function clearScript() {
+            scriptInput.value = '';
+            updateScriptStats();
+        }
+
+        // --- MODE SWITCHING (EDITOR vs PROMPTER) ---
+        function setMode(mode) {
+            currentMode = mode;
+            if (mode === 'edit') {
+                stopVoiceSync();
+                stopManualScroll();
+                viewPrompter.classList.add('hidden');
+                viewEditor.classList.remove('hidden');
+
+                btnModeEdit.className = "px-4 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-2 transition-all bg-indigo-600 text-white shadow-md";
+                btnModePrompt.className = "px-4 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-2 transition-all text-slate-400 hover:text-white";
+            } else {
+                scriptText = scriptInput.value.trim();
+                if (!scriptText) {
+                    showToast('Silakan masukkan naskah terlebih dahulu!');
+                    return;
+                }
+                preparePrompterTokens();
+                viewEditor.classList.add('hidden');
+                viewPrompter.classList.remove('hidden');
+
+                btnModePrompt.className = "px-4 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-2 transition-all bg-indigo-600 text-white shadow-md";
+                btnModeEdit.className = "px-4 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-2 transition-all text-slate-400 hover:text-white";
+
+                // Auto-start voice sync in prompter mode if supported
+                startVoiceSync();
+            }
+            lucide.createIcons();
+        }
+
+        // --- PREPARE & TOKENIZE TEXT FOR HIGH-PRECISION TRACKING ---
+        function preparePrompterTokens() {
+            prompterText.innerHTML = '';
+            tokenizedWords = [];
+            currentWordIndex = 0;
+
+            const paragraphs = scriptText.split(/\n+/);
+            let globalWordId = 0;
+
+            paragraphs.forEach(paragraphStr => {
+                const pElement = document.createElement('p');
+                pElement.className = 'mb-8';
+
+                const wordsArr = paragraphStr.trim().split(/\s+/);
+                wordsArr.forEach(wordStr => {
+                    if (!wordStr) return;
+
+                    const span = document.createElement('span');
+                    span.className = 'word-token upcoming';
+                    span.innerText = wordStr + ' ';
+                    span.dataset.id = globalWordId;
+
+                    // Clean punctuation for speech matching (lowercased alphanumeric)
+                    const clean = wordStr.toLowerCase().replace(/[^a-z0-9à-ÿ]/gi, '');
+
+                    tokenizedWords.push({
+                        id: globalWordId,
+                        text: wordStr,
+                        cleanText: clean,
+                        element: span
+                    });
+
+                    pElement.appendChild(span);
+                    globalWordId++;
+                });
+
+                prompterText.appendChild(pElement);
+            });
+
+            updateWordHighlights();
+            updateFontSize(fontSize);
+            setTimeout(scrollToCurrentWord, 100);
+        }
+
+        // --- SPEECH RECOGNITION (WEB SPEECH API) ---
+        function initSpeechRecognition() {
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            
+            if (!SpeechRecognition) {
+                updateMicStatus(false, 'Speech API Tidak Didukung');
+                showToast('Browser Anda tidak mendukung SpeechRecognition. Menggunakan scroll manual.', true);
+                return;
+            }
+
+            recognition = new SpeechRecognition();
+            recognition.continuous = true;
+            recognition.interimResults = true;
+            recognition.maxAlternatives = 1;
+            recognition.lang = selectedLang;
+
+            recognition.onstart = () => {
+                isVoiceSyncActive = true;
+                updateMicStatus(true, 'Mendengarkan Suara...');
+                syncModeLabel.innerText = 'Voice Sync ON';
+                syncModeLabel.className = 'text-xs font-semibold text-emerald-400';
+                badgeMicLive.classList.remove('hidden');
+            };
+
+            recognition.onerror = (event) => {
+                console.warn('Speech Rec Error:', event.error);
+                if (event.error === 'not-allowed') {
+                    updateMicStatus(false, 'Izin Mikrofon Ditolak');
+                    showToast('Izin mikrofon ditolak!', true);
+                    stopVoiceSync();
+                }
+            };
+
+            recognition.onend = () => {
+                // Auto-restart if user still wants voice sync active in prompter mode
+                if (isVoiceSyncActive && currentMode === 'prompt') {
+                    try {
+                        recognition.start();
+                    } catch (e) {
+                        // ignore restart errors
+                    }
+                } else {
+                    updateMicStatus(false, 'Mic Standby');
+                    syncModeLabel.innerText = 'Manual Mode';
+                    syncModeLabel.className = 'text-xs font-semibold text-slate-400';
+                    badgeMicLive.classList.add('hidden');
+                }
+            };
+
+            recognition.onresult = (event) => {
+                let interimTranscript = '';
+                let finalTranscript = '';
+
+                for (let i = event.resultIndex; i < event.results.length; ++i) {
+                    const transcript = event.results[i][0].transcript;
+                    if (event.results[i].isFinal) {
+                        finalTranscript += transcript + ' ';
+                    } else {
+                        interimTranscript += transcript;
+                    }
+                }
+
+                const spokenPhrase = (finalTranscript + ' ' + interimTranscript).trim().toLowerCase();
+                if (spokenPhrase) {
+                    processSpokenPhrase(spokenPhrase);
+                }
+            };
+        }
+
+        function toggleVoiceSync() {
+            if (isVoiceSyncActive) {
+                stopVoiceSync();
+                showToast('Voice Sync Dimatikan');
+            } else {
+                startVoiceSync();
+                showToast('Voice Sync Diaktifkan');
+            }
+        }
+
+        function startVoiceSync() {
+            if (!recognition) return;
+            if (isManualPlaying) stopManualScroll();
+
+            isVoiceSyncActive = true;
+            recognition.lang = selectedLang;
+            try {
+                recognition.start();
+            } catch (e) {
+                // Recognition might already be running
+            }
+        }
+
+        function stopVoiceSync() {
+            isVoiceSyncActive = false;
+            if (recognition) {
+                try {
+                    recognition.stop();
+                } catch (e) {}
+            }
+            updateMicStatus(false, 'Mic Nonaktif');
+            syncModeLabel.innerText = 'Manual Mode';
+            syncModeLabel.className = 'text-xs font-semibold text-slate-400';
+            badgeMicLive.classList.add('hidden');
+        }
+
+        function updateMicStatus(active, text) {
+            micStatusText.innerText = text;
+            if (active) {
+                micDot.className = "w-2 h-2 rounded-full bg-emerald-500 animate-pulse";
+            } else {
+                micDot.className = "w-2 h-2 rounded-full bg-slate-500";
+            }
+        }
+
+        // --- SPEECH MATCHING & AUTO-SCROLL ALGORITHM ---
+        function processSpokenPhrase(phrase) {
+            const spokenWords = phrase.split(/\s+/).map(w => w.replace(/[^a-z0-9à-ÿ]/gi, '')).filter(Boolean);
+            if (spokenWords.length === 0 || tokenizedWords.length === 0) return;
+
+            // Search window: Look ahead up to 12 words from current position
+            const searchWindowSize = 15;
+            const startIndex = currentWordIndex;
+            const endIndex = Math.min(tokenizedWords.length, startIndex + searchWindowSize);
+
+            // Match recent spoken word tokens against tokenized script
+            const lastSpoken = spokenWords[spokenWords.length - 1];
+            const prevSpoken = spokenWords.length > 1 ? spokenWords[spokenWords.length - 2] : null;
+
+            let matchedIndex = -1;
+
+            for (let i = startIndex; i < endIndex; i++) {
+                const targetClean = tokenizedWords[i].cleanText;
+
+                // Single word exact or prefix match
+                if (targetClean === lastSpoken || (targetClean.length > 3 && lastSpoken.startsWith(targetClean))) {
+                    // If we have previous word context, double check sequence match
+                    if (prevSpoken && i > 0) {
+                        const prevTargetClean = tokenizedWords[i - 1].cleanText;
+                        if (prevTargetClean === prevSpoken) {
+                            matchedIndex = i;
+                            break;
+                        }
+                    }
+                    matchedIndex = i;
+                }
+            }
+
+            // If match found, update position and trigger auto scroll
+            if (matchedIndex !== -1 && matchedIndex >= currentWordIndex) {
+                currentWordIndex = matchedIndex;
+                updateWordHighlights();
+                scrollToCurrentWord();
+            }
+        }
+
+        // --- HIGHLIGHTING & SMOOTH FOCUS CENTERING ---
+        function updateWordHighlights() {
+            tokenizedWords.forEach((wordObj, index) => {
+                const el = wordObj.element;
+                if (index < currentWordIndex) {
+                    el.className = 'word-token spoken';
+                } else if (index === currentWordIndex) {
+                    el.className = 'word-token active';
+                } else {
+                    el.className = 'word-token upcoming';
+                }
+            });
+        }
+
+        function scrollToCurrentWord() {
+            if (!tokenizedWords[currentWordIndex]) return;
+
+            const activeEl = tokenizedWords[currentWordIndex].element;
+            const containerRect = prompterScrollBox.getBoundingClientRect();
+            const elRect = activeEl.getBoundingClientRect();
+
+            // Calculate vertical center relative to scroll container
+            const relativeTop = elRect.top - containerRect.top + prompterScrollBox.scrollTop;
+            const targetScrollTop = relativeTop - (containerRect.height / 2) + (elRect.height / 2);
+
+            prompterScrollBox.scrollTo({
+                top: targetScrollTop,
+                behavior: 'smooth'
+            });
+        }
+
+        // --- MANUAL CONTROLS BACKUP ---
+        function togglePlayPause() {
+            if (isManualPlaying) {
+                stopManualScroll();
+            } else {
+                startManualScroll();
+            }
+        }
+
+        function startManualScroll() {
+            if (isVoiceSyncActive) stopVoiceSync();
+            isManualPlaying = true;
+            iconPlayPause.setAttribute('data-lucide', 'pause');
+            lucide.createIcons();
+            
+            clearInterval(manualScrollInterval);
+            manualScrollInterval = setInterval(() => {
+                prompterScrollBox.scrollTop += manualScrollSpeed;
+            }, 30);
+        }
+
+        function stopManualScroll() {
+            isManualPlaying = false;
+            iconPlayPause.setAttribute('data-lucide', 'play');
+            lucide.createIcons();
+            clearInterval(manualScrollInterval);
+        }
+
+        function resetPrompterPosition() {
+            currentWordIndex = 0;
+            updateWordHighlights();
+            prompterScrollBox.scrollTo({ top: 0, behavior: 'smooth' });
+            showToast('Posisi direset ke awal');
+        }
+
+        function updateSpeed(val) {
+            manualScrollSpeed = parseInt(val, 10);
+            document.getElementById('speed-val').innerText = `${val}x`;
+        }
+
+        function updateFontSize(val) {
+            fontSize = parseInt(val, 10);
+            document.getElementById('fontsize-val').innerText = `${val}px`;
+            prompterText.style.fontSize = `${val}px`;
+            prompterText.style.lineHeight = `${val * 1.6}px`;
+            scrollToCurrentWord();
+        }
+
+        function cycleMirrorMode() {
+            mirrorState = (mirrorState + 1) % mirrorClasses.length;
+            prompterWrapper.className = `origin-center transition-all duration-300 ${mirrorClasses[mirrorState]}`;
+            document.getElementById('mirror-label').innerText = mirrorLabels[mirrorState];
+            showToast(`Mirror mode: ${mirrorLabels[mirrorState]}`);
+        }
+
+        function changeLanguage(langCode) {
+            selectedLang = langCode;
+            if (isVoiceSyncActive && recognition) {
+                recognition.stop();
+                startVoiceSync();
+            }
+            showToast(`Bahasa diubah ke ${langCode}`);
+        }
+
+        function toggleTheme() {
+            isHighContrast = !isHighContrast;
+            if (isHighContrast) {
+                document.body.classList.add('theme-high-contrast');
+                showToast('Tema Kontras Tinggi Aktif');
+            } else {
+                document.body.classList.remove('theme-high-contrast');
+                showToast('Tema Standar Aktif');
+            }
+        }
+
+        // --- TOAST NOTIFICATIONS ---
+        function showToast(message, isError = false) {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            toast.className = `px-4 py-2.5 rounded-xl text-xs font-medium border shadow-xl flex items-center gap-2 transition-all duration-300 transform translate-x-8 opacity-0 ${
+                isError 
+                ? 'bg-red-950/90 border-red-800 text-red-200' 
+                : 'bg-slate-900/90 border-slate-700 text-slate-100'
+            }`;
+            
+            toast.innerHTML = `<i data-lucide="${isError ? 'alert-circle' : 'info'}" class="w-4 h-4"></i> ${message}`;
+            container.appendChild(toast);
+            lucide.createIcons();
+
+            setTimeout(() => {
+                toast.classList.remove('translate-x-8', 'opacity-0');
+            }, 10);
+
+            setTimeout(() => {
+                toast.classList.add('opacity-0', 'translate-x-8');
+                setTimeout(() => toast.remove(), 300);
+            }, 3000);
+        }
+    </script>
+</body>
+</html>
